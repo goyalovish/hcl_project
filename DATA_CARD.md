@@ -18,4 +18,4 @@ No real personal data is used. These documents and decisions are demo-only and m
 
 ## Reproducibility
 
-Run `python scripts/generate_students.py`, then `python scripts/validate_students.py`.
+Run `...python scripts/generate_students.py`, then `python scripts/validate_students.py`.
