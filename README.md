@@ -86,32 +86,66 @@ Three official, public NIT Jalandhar documents in `data/documents/official/`, re
 
 ## 🏗️ Architecture
 
+### System overview
+
+```mermaid
+flowchart LR
+    U([👤 Student / Judge]) --> UI[Streamlit UI]
+    UI -->|"HTTP + X-Student-Id"| API[FastAPI<br/>/ask · /ingest · /health<br/>/audit · /sources]
+    API --> WF{{LangGraph<br/>workflow}}
+    API -->|POST /ingest| ING[Ingestion<br/>PyMuPDF + Tesseract OCR<br/>section-aware chunking]
+
+    ING --> EMB[all-MiniLM-L6-v2<br/>embeddings]
+    EMB --> CH[(ChromaDB<br/>document chunks)]
+    ING --> SQ[(SQLite<br/>sources · rules · students<br/>attendance · results · audit)]
+
+    WF <-->|semantic search| CH
+    WF <-->|metadata, rules, records| SQ
+    WF <-->|"spelling fix + answer wording"| OL[Ollama<br/>llama3.2:3b]
+
+    RR[rule_registry.csv] -->|build_rule_registry.py<br/>validated against clauses| SQ
+    SR[source_register.csv] --> SQ
+    GEN[generate_students.py<br/>LLM + validation] -->|load_students.py| SQ
+
+    classDef store fill:#eef6ff,stroke:#4a90d9,color:#1a3a5c;
+    classDef llm fill:#fff4e5,stroke:#e69a28,color:#5c3a00;
+    class CH,SQ store;
+    class OL,EMB llm;
 ```
-Streamlit UI ──HTTP──► FastAPI ──► LangGraph workflow
-                                     │
-  classify_question ◄────────────────┘
-   │  LLM corrects spelling/grammar (rejected if it changes an ID, course code or number),
-   │  then deterministic analysis: category, courses, eligibility check, what-if
-   │
-   ├─ personal / eligibility / what-if ─► authorise_personal_access   (X-Student-Id only)
-   │                                         ├─ refused ──────────────────────────────┐
-   │                                         ├─ needs documents ─┐                    │
-   │                                         └─ records only ────┼──────────┐         │
-   ├─ policy / procedure ────────────────► retrieve_policy_evidence ◄──► ChromaDB    │
-   │                                         │                              │         │
-   │                                resolve_source_precedence ◄──► SQLite   │         │
-   │                                (relevance check + Annex A)             │         │
-   │                                         │                              ▼         │
-   │                                         └──────────────────► run_student_tools  │
-   │                                                              (rules + records)   │
-   │                                                                        │         │
-   └──────────────────────────────────────────────► build_grounded_draft ◄──┴─────────┘
-                                                           │
-                                            generate_llm_answer ◄─► validate_llm_answer
-                                            (Ollama, bounded retries; falls back to the verified draft)
-                                                           │
-                                                   create_audit_record ─► response
+
+### Request workflow (LangGraph)
+
+```mermaid
+flowchart TD
+    S([POST /ask]) --> C["<b>classify_question</b><br/>LLM spelling/grammar fix (IDs, codes, numbers must not change)<br/>+ deterministic category, course, check, what-if"]
+    C -->|unclear| D
+    C -->|personal · eligibility · what-if| AU["<b>authorise_personal_access</b><br/>X-Student-Id only · no other student's ID"]
+    C -->|policy · procedure| R["<b>retrieve_policy_evidence</b><br/>ChromaDB top-k"]
+
+    AU -->|refused| D
+    AU -->|needs documents| R
+    AU -->|records only| T
+
+    R --> P["<b>resolve_source_precedence</b><br/>relevance check (distance + keyword coverage)<br/>Annex A: applicability → supersession → authority → recency"]
+    P -->|personal| T["<b>run_student_tools</b><br/>rule registry + Annex A · student records<br/>deterministic eligibility & arithmetic"]
+    P -->|policy| D
+
+    T --> D["<b>build_grounded_draft</b><br/>verified answer + citations from metadata"]
+    D -->|LLM enabled & useful| L["<b>generate_llm_answer</b><br/>Ollama rewords the draft"]
+    D -->|pure lookup / refusal| A
+    L --> V{"<b>validate_llm_answer</b><br/>JSON · no new numbers · no other IDs"}
+    V -->|invalid, retries left| L
+    V -->|valid, or fall back to draft| A["<b>create_audit_record</b><br/>trace_id · sources · decisions · tools · rules · tokens · latency"]
+    A --> E([Response])
+
+    classDef det fill:#eefbea,stroke:#3c9a3c,color:#1c4a1c;
+    classDef llm fill:#fff4e5,stroke:#e69a28,color:#5c3a00;
+    class AU,P,T,D,A det;
+    class L,V llm;
 ```
+
+Green steps are deterministic Python; orange steps involve the LLM, whose output is always validated.
+Steps run only when needed: `START → classify → [authorise] → [retrieve → precedence] → [tools] → draft → [LLM ⇄ validate] → audit → END`.
 
 **Retrieval vs evidence.** A chunk counts as evidence only if its cosine distance is ≤ `RETRIEVAL_MAX_DISTANCE`
 (0.75) **and** at least `MIN_KEYWORD_COVERAGE` (50%) of the question's content words appear in it.
