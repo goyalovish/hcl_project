@@ -1,3 +1,4 @@
+//frontend
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ArrowRight, BookOpen, Bot, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, CircleHelp, Clock3, Database, FileText, GraduationCap, Info, LockKeyhole, Menu, MessageCircle, Plus, Send, ShieldCheck, Sparkles, UserRound, X, AlertTriangle, ExternalLink } from 'lucide-react';
@@ -59,8 +60,7 @@ function App() {
     abort.current = controller;
     const started = performance.now();
     try {
-      // The API requires a demo student header for every request, including public policy questions.
-      const headers: Record<string, string> = { 'Content-Type': 'application/json', 'X-Student-Id': student };
+      const head: Record<string, string> = { 'Content-Type': 'application/json', 'X-Student-Id': student };
       const res = await fetch(`${API}/ask`, {
         method: 'POST', headers, signal: controller.signal,
         body: JSON.stringify({ question: clean, ...(asOf ? { as_of_date: asOf } : {}) })
